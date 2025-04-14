@@ -1,0 +1,110 @@
+name: Integrated System CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main # Запускати при пуші в main
+  pull_request:
+    branches:
+      - main # Запускати для Pull Requests в main (для тестування)
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Docker image for App
+        id: build_app
+        run: |
+          docker build -t my-integrated-app:test .
+          echo "::set-output name=image_tag::my-integrated-app:test"
+
+      # Крок 4: Налаштування автоматизованих тестів
+      - name: Run Unit/Integration Tests (using Docker)
+        run: |
+          # Запускаємо контейнер з зібраним образом і виконуємо тести всередині
+          # Це базовий варіант, він не запускає docker-compose
+          docker run --rm ${{ steps.build_app.outputs.image_tag }} pytest tests/
+          # БІЛЬШ ПРОСУНУТИЙ ВАРІАНТ:
+          # Запустити docker-compose з тестовим профілем або окремим файлом
+          # docker-compose -f docker-compose.test.yml up -d
+          # # Запустити тести, які звертаються до сервісів (наприклад, API тести)
+          # docker run --rm --network=${{ github.event.repository.name }}_app_network appropriate/test-runner test_command
+          # docker-compose -f docker-compose.test.yml down -v
+
+  push_image:
+    name: Push Docker Image
+    runs-on: ubuntu-latest
+    needs: build # Запускати тільки після успішного build & test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' # Тільки для пушів в main
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to Docker Hub (або інший registry)
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }} # Секрет GitHub
+          password: ${{ secrets.DOCKERHUB_TOKEN }}   # Секрет GitHub (краще використовувати Token)
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/my-integrated-app:latest,${{ secrets.DOCKERHUB_USERNAME }}/my-integrated-app:${{ github.sha }} # Тегуємо latest та SHA коміту
+
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: push_image # Запускати тільки після успішного пушу образу
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' # Тільки для пушів в main
+
+    steps:
+      - name: Deploy using SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}             # IP або DNS сервера (Секрет GitHub)
+          username: ${{ secrets.SSH_USER }}         # Користувач для SSH (Секрет GitHub)
+          key: ${{ secrets.SSH_PRIVATE_KEY }}      # Приватний SSH ключ (Секрет GitHub)
+          script: |
+            # Переходимо в директорію проекту на сервері (змініть шлях!)
+            cd /home/${{ secrets.SSH_USER }}/my_integrated_system_project
+
+            # Оновлюємо docker-compose.yml (якщо потрібно, наприклад, з репозиторію)
+            # git pull origin main # Не найкраща практика тримати код на сервері так
+
+            # Встановлюємо змінну середовища з новим тегом образу
+            export APP_TAG=${{ github.sha }}
+            export DOCKER_USERNAME=${{ secrets.DOCKERHUB_USERNAME }} # Передаємо логін для pull
+
+            # Логін до Docker Hub на сервері (якщо образ приватний)
+            echo ${{ secrets.DOCKERHUB_TOKEN }} | docker login --username ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
+
+            # Оновлюємо образ(и)
+            docker pull $DOCKER_USERNAME/my-integrated-app:$APP_TAG
+            # Перетегуємо на 'latest', якщо docker-compose використовує 'latest'
+            # docker tag $DOCKER_USERNAME/my-integrated-app:$APP_TAG $DOCKER_USERNAME/my-integrated-app:latest
+
+            # Замінюємо тег образу в docker-compose.yml (якщо тег не через змінну середовища)
+            # Наприклад, за допомогою sed:
+            sed -i "s|image: $DOCKER_USERNAME/my-integrated-app:.*|image: $DOCKER_USERNAME/my-integrated-app:$APP_TAG|g" docker-compose.yml
+
+            # Перезапускаємо сервіси за допомогою Docker Compose
+            # --remove-orphans видаляє старі контейнери, якщо сервіси були видалені з compose файлу
+            docker-compose down # Зупиняємо старі контейнери (можливий короткий простій)
+            docker-compose up -d --remove-orphans # Запускаємо нові/оновлені
+
+            # (Опціонально) Очистка старих образів Docker
+            docker image prune -af
