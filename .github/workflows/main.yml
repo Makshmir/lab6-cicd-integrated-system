@@ -30,8 +30,8 @@ jobs:
         run: |
           # Запускаємо контейнер з зібраним образом і виконуємо тести всередині
           docker run --rm my-integrated-app:ci-test pytest tests/
-          # Примітка: Якщо ваші тести потребують запущеного docker-compose,
-          # їх краще перенести в job 'test_compose_startup' після 'docker-compose up'.
+          # Примітка: Якщо ваші тести потребують запущеного docker compose,
+          # їх краще перенести в job 'test_compose_startup' після 'docker compose up'.
 
   # --- (ОПЦІОНАЛЬНО) Етап публікації образу в Docker Hub ---
   # Якщо ви не хочете публікувати образ, видаліть або закоментуйте цей job.
@@ -66,9 +66,9 @@ jobs:
 
   # --- Етап перевірки запуску Docker Compose ---
   # Цей етап замінює розгортання. Він перевіряє, чи може ваше
-  # середовище (визначене в docker-compose.yml) успішно запуститись
+  # середовище (визначене в docker compose.yml) успішно запуститись
   # на машині GitHub Actions runner.
- test_compose_startup:
+  test_compose_startup:
     name: Test Docker Compose Startup
     runs-on: ubuntu-latest
     needs: build
@@ -81,23 +81,23 @@ jobs:
         uses: docker/setup-buildx-action@v2
 
       - name: Build Docker image for App (if needed by compose image: tag)
-        # Якщо ваш docker-compose.yml використовує `build: .` для сервісу 'app',
+        # Якщо ваш docker compose.yml використовує `build: .` для сервісу 'app',
         # цей крок може бути не потрібним, оскільки `docker compose up` зробить збірку.
         # Якщо він використовує `image: some-name:tag`, вам потрібно зібрати його тут:
         # run: docker build -t some-name:tag .
-        run: echo "Assuming docker-compose.yml uses 'build: .' or image is pre-built/pulled."
+        run: echo "Assuming docker compose.yml uses 'build: .' or image is pre-built/pulled."
 
       # --- Зміни тут ---
       - name: Start services with Docker Compose
-        # Використовуємо 'docker compose' замість 'docker-compose'
-        run: docker compose -f docker-compose.yml up -d
+        # Використовуємо 'docker compose' замість 'docker compose'
+        run: docker compose -f docker compose.yml up -d
 
       - name: Wait for services
         run: sleep 20
 
       # --- Зміни тут ---
       - name: Check running containers status
-        # Використовуємо 'docker compose' замість 'docker-compose'
+        # Використовуємо 'docker compose' замість 'docker compose'
         run: docker compose ps
 
       - name: Check App Health (Example)
@@ -107,7 +107,7 @@ jobs:
       # --- Зміни тут ---
       - name: Stop and clean up services
         if: always()
-        # Використовуємо 'docker compose' замість 'docker-compose'
+        # Використовуємо 'docker compose' замість 'docker compose'
         run: docker compose down -v --remove-orphans
 
   # --- Етап розгортання видалено ---
