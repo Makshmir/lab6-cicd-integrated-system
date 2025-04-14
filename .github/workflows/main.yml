@@ -90,7 +90,7 @@ jobs:
       # --- Зміни тут ---
       - name: Start services with Docker Compose
         # Використовуємо 'docker compose' замість 'docker compose'
-        run: docker compose -f docker compose.yml up -d
+        run: docker compose -f docker-compose.yml up -d #
 
       - name: Wait for services
         run: sleep 20
