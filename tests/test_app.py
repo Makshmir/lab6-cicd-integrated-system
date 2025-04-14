@@ -19,4 +19,4 @@ def test_status_mocked():
      assert response.status_code == 200
      json_data = response.get_json()
      assert json_data["software_status"] == "OK"
-     assert "hardware_status" in json_datas
+     assert "hardware_status" in json_data
