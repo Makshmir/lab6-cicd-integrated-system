@@ -1,37 +1,36 @@
-version: '3.8'
-
 services:
   app:
-    build: . # Збирає образ з локального Dockerfile
-    # image: your-dockerhub-username/my-app:${APP_TAG:-latest} # Альтернатива: використання зібраного образу
+    build: .
     container_name: integrated_app
     restart: unless-stopped
     ports:
-      - "5000:5000" # Мапінг порту додатку
+      - "5000:5000"
     networks:
-      - app_network
-      # - monitoring_network # Якщо розділяти мережі
+      app_network: # <-- Явно вказуємо мережу тут
+        # Можна не вказувати IP для app, він отримає динамічно
+        # з підмережі, визначеної нижче
     environment:
-      # Передаємо адресу симулятора АЗ (якщо потрібно)
       - HW_SIMULATOR_ADDRESS=http://az_simulator:8080
     depends_on:
-      - az_simulator # Додаток залежить від симулятора
-    logging: # Налаштування логування для відправки в ELK
-      driver: "gelf" # Або fluentd
+      - az_simulator
+      - logstash
+    logging:
+      driver: "gelf"
       options:
-        gelf-address: "udp://localhost:12201" # Адреса Logstash GELF input
+        # --- ЗМІНИ ТУТ: Використовуємо статичну IP Logstash ---
+        gelf-address: "udp://172.28.1.1:12201" # <-- ВКАЖІТЬ СТАТИЧНУ IP
+        # --- Кінець змін ---
         tag: "integrated_app"
 
   az_simulator:
-    # Замініть на ваш реальний образ симулятора АЗ
-    image: alpine:latest # Приклад заглушки
+    image: alpine:latest
     container_name: az_simulator
-    command: sh -c "echo 'Simulating HW...' && sleep infinity" # Проста команда для прикладу
+    command: sh -c "echo 'Simulating HW...' && sleep infinity"
     restart: unless-stopped
-    # ports:
-    #   - "8080:8080" # Якщо симулятор має API
     networks:
-      - app_network
+      app_network: # <-- Явно вказуємо мережу
+        # IP для симулятора (опціонально)
+        # ipv4_address: 172.28.1.2
 
   prometheus:
     image: prom/prometheus:v2.37.0
@@ -41,43 +40,35 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus_data:/prometheus # Збереження даних
+      - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
-      - '--web.console.templates=/usr/share/prometheus/consoles'
+      # ... решта command ...
     networks:
-      - app_network # Або monitoring_network
+      app_network: # <-- Явно вказуємо мережу
 
   grafana:
     image: grafana/grafana:8.5.2
     container_name: grafana
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3001:3000"
     volumes:
       - grafana_data:/var/lib/grafana
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin # Змініть пароль!
-      # Можна налаштувати джерело даних Prometheus автоматично
-      # - GF_DATASOURCES_DEFAULT_NAME=Prometheus
-      # - GF_DATASOURCES_DEFAULT_TYPE=prometheus
-      # - GF_DATASOURCES_DEFAULT_URL=http://prometheus:9090
-      # - GF_DATASOURCES_DEFAULT_ACCESS=proxy
+      - GF_SECURITY_ADMIN_PASSWORD=admin
     depends_on:
       - prometheus
     networks:
-      - app_network # Або monitoring_network
+      app_network: # <-- Явно вказуємо мережу
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.5 # Виберіть сумісну версію
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.5
     container_name: elasticsearch
     restart: unless-stopped
     environment:
       - discovery.type=single-node
-      - bootstrap.memory_lock=true
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m" # Налаштуйте пам'ять
+      # ... решта environment ...
     ulimits:
       memlock:
         soft: -1
@@ -87,21 +78,24 @@ services:
     ports:
       - "9200:9200"
     networks:
-      - app_network # Або logging_network
+      app_network: # <-- Явно вказуємо мережу
 
   logstash:
     image: docker.elastic.co/logstash/logstash:7.17.5
     container_name: logstash
     restart: unless-stopped
     volumes:
-      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro # Конфігурація pipeline
+      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
     ports:
-      - "5044:5044" # Порт для Beats (якщо використовуєте)
-      - "12201:12201/udp" # Порт для GELF input (використовується в 'app')
+      - "5044:5044"
+      - "12201:12201/udp"
     depends_on:
       - elasticsearch
+    # --- ЗМІНИ ТУТ: Призначаємо статичну IP для Logstash ---
     networks:
-      - app_network # Або logging_network
+      app_network:
+        ipv4_address: 172.28.1.1 # <-- СТАТИЧНА IP ДЛЯ LOGSTASH
+    # --- Кінець змін ---
 
   kibana:
     image: docker.elastic.co/kibana/kibana:7.17.5
@@ -110,22 +104,24 @@ services:
     ports:
       - "5601:5601"
     environment:
-      ELASTICSEARCH_HOSTS: http://elasticsearch:9200 # Адреса Elasticsearch
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
     depends_on:
       - elasticsearch
     networks:
-      - app_network # Або logging_network
+      app_network: # <-- Явно вказуємо мережу
 
+# --- ЗМІНИ ТУТ: Конфігуруємо мережу з IPAM ---
 networks:
   app_network:
     driver: bridge
-  # Можна створити окремі мережі для моніторингу/логування
-  # monitoring_network:
-  #   driver: bridge
-  # logging_network:
-  #   driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16 # Визначаємо підмережу для нашої мережі
+          gateway: 172.28.0.1
+# --- Кінець змін ---
 
-volumes: # Для збереження даних
+volumes:
   prometheus_data:
   grafana_data:
   elasticsearch_data:
