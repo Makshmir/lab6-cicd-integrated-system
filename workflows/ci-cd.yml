@@ -10,7 +10,7 @@ on:
 
 jobs:
   build:
-    name: Build & Test
+    name: Build & Test App
     runs-on: ubuntu-latest
 
     steps:
@@ -22,28 +22,26 @@ jobs:
 
       - name: Build Docker image for App
         id: build_app
-        run: |
-          docker build -t my-integrated-app:test .
-          echo "::set-output name=image_tag::my-integrated-app:test"
+        # Збираємо образ з тегом, який будемо використовувати для тестування
+        run: docker build -t my-integrated-app:ci-test .
 
       # Крок 4: Налаштування автоматизованих тестів
       - name: Run Unit/Integration Tests (using Docker)
         run: |
           # Запускаємо контейнер з зібраним образом і виконуємо тести всередині
-          # Це базовий варіант, він не запускає docker-compose
-          docker run --rm ${{ steps.build_app.outputs.image_tag }} pytest tests/
-          # БІЛЬШ ПРОСУНУТИЙ ВАРІАНТ:
-          # Запустити docker-compose з тестовим профілем або окремим файлом
-          # docker-compose -f docker-compose.test.yml up -d
-          # # Запустити тести, які звертаються до сервісів (наприклад, API тести)
-          # docker run --rm --network=${{ github.event.repository.name }}_app_network appropriate/test-runner test_command
-          # docker-compose -f docker-compose.test.yml down -v
+          docker run --rm my-integrated-app:ci-test pytest tests/
+          # Примітка: Якщо ваші тести потребують запущеного docker-compose,
+          # їх краще перенести в job 'test_compose_startup' після 'docker-compose up'.
 
+  # --- (ОПЦІОНАЛЬНО) Етап публікації образу в Docker Hub ---
+  # Якщо ви не хочете публікувати образ, видаліть або закоментуйте цей job.
+  # Вам потрібно буде налаштувати секрети DOCKERHUB_USERNAME та DOCKERHUB_TOKEN.
   push_image:
-    name: Push Docker Image
+    name: Push Docker Image to Registry
     runs-on: ubuntu-latest
     needs: build # Запускати тільки після успішного build & test
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push' # Тільки для пушів в main
+    # Публікуємо тільки при прямому пуші в main, не для PR
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
     steps:
       - name: Check out the repository
@@ -52,59 +50,83 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Log in to Docker Hub (або інший registry)
+      - name: Log in to Docker Hub
         uses: docker/login-action@v2
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }} # Секрет GitHub
-          password: ${{ secrets.DOCKERHUB_TOKEN }}   # Секрет GitHub (краще використовувати Token)
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v3
         with:
           context: .
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/my-integrated-app:latest,${{ secrets.DOCKERHUB_USERNAME }}/my-integrated-app:${{ github.sha }} # Тегуємо latest та SHA коміту
+          # Тегуємо двома тегами: latest та унікальним SHA коміту
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/my-integrated-app:latest,${{ secrets.DOCKERHUB_USERNAME }}/my-integrated-app:${{ github.sha }}
 
-  deploy:
-    name: Deploy to Production
+  # --- Етап перевірки запуску Docker Compose ---
+  # Цей етап замінює розгортання. Він перевіряє, чи може ваше
+  # середовище (визначене в docker-compose.yml) успішно запуститись
+  # на машині GitHub Actions runner.
+  test_compose_startup:
+    name: Test Docker Compose Startup
     runs-on: ubuntu-latest
-    needs: push_image # Запускати тільки після успішного пушу образу
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push' # Тільки для пушів в main
+    # Запускаємо після успішної збірки. Якщо push_image є, можна поставити 'needs: push_image'
+    # Але для простої перевірки запуску достатньо 'needs: build'
+    needs: build
 
     steps:
-      - name: Deploy using SSH
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.SSH_HOST }}             # IP або DNS сервера (Секрет GitHub)
-          username: ${{ secrets.SSH_USER }}         # Користувач для SSH (Секрет GitHub)
-          key: ${{ secrets.SSH_PRIVATE_KEY }}      # Приватний SSH ключ (Секрет GitHub)
-          script: |
-            # Переходимо в директорію проекту на сервері (змініть шлях!)
-            cd /home/${{ secrets.SSH_USER }}/my_integrated_system_project
+      - name: Check out the repository
+        uses: actions/checkout@v3
 
-            # Оновлюємо docker-compose.yml (якщо потрібно, наприклад, з репозиторію)
-            # git pull origin main # Не найкраща практика тримати код на сервері так
+      # Нам потрібен образ 'app'. Ми можемо або зібрати його тут знову,
+      # або завантажити з реєстру (якщо job push_image виконавсся і був успішним),
+      # або передати як артефакт з job 'build'.
+      # Найпростіший варіант для перевірки - зібрати знову.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
-            # Встановлюємо змінну середовища з новим тегом образу
-            export APP_TAG=${{ github.sha }}
-            export DOCKER_USERNAME=${{ secrets.DOCKERHUB_USERNAME }} # Передаємо логін для pull
+      - name: Build Docker image for App (required for compose)
+        # Використовуємо тег, який очікується в docker-compose.yml (якщо там вказано 'build: .')
+        # або конкретний тег, якщо docker-compose посилається на image.
+        # Якщо docker-compose.yml використовує 'build: .', цей крок може бути непотрібним,
+        # оскільки 'docker-compose up' сам виконає збірку.
+        # Але якщо ви хочете бути впевненими або використовуєте image:, то збірка потрібна.
+        # Припускаємо, що docker-compose.yml використовує 'build: .' для сервісу 'app'.
+        # Якщо ні, змініть docker-compose.yml або зберіть з потрібним тегом:
+        # run: docker build -t your-image-name-from-compose:tag .
+        # Якщо compose використовує `build: .`, цей крок можна прибрати або просто вивести повідомлення.
+        run: echo "Assuming docker-compose will build the 'app' service from context."
 
-            # Логін до Docker Hub на сервері (якщо образ приватний)
-            echo ${{ secrets.DOCKERHUB_TOKEN }} | docker login --username ${{ secrets.DOCKERHUB_USERNAME }} --password-stdin
 
-            # Оновлюємо образ(и)
-            docker pull $DOCKER_USERNAME/my-integrated-app:$APP_TAG
-            # Перетегуємо на 'latest', якщо docker-compose використовує 'latest'
-            # docker tag $DOCKER_USERNAME/my-integrated-app:$APP_TAG $DOCKER_USERNAME/my-integrated-app:latest
+      # Запуск docker-compose
+      - name: Start services with Docker Compose
+        run: docker-compose -f docker-compose.yml up -d # Запускаємо в фоновому режимі
 
-            # Замінюємо тег образу в docker-compose.yml (якщо тег не через змінну середовища)
-            # Наприклад, за допомогою sed:
-            sed -i "s|image: $DOCKER_USERNAME/my-integrated-app:.*|image: $DOCKER_USERNAME/my-integrated-app:$APP_TAG|g" docker-compose.yml
+      # Даємо сервісам час на старт (можливо, знадобиться збільшити)
+      - name: Wait for services
+        run: sleep 20
 
-            # Перезапускаємо сервіси за допомогою Docker Compose
-            # --remove-orphans видаляє старі контейнери, якщо сервіси були видалені з compose файлу
-            docker-compose down # Зупиняємо старі контейнери (можливий короткий простій)
-            docker-compose up -d --remove-orphans # Запускаємо нові/оновлені
+      # Перевіряємо, чи контейнери працюють і їх стан
+      - name: Check running containers status
+        run: docker-compose ps
 
-            # (Опціонально) Очистка старих образів Docker
-            docker image prune -af
+      # (Рекомендовано) Додати конкретну перевірку працездатності вашого основного додатку
+      # Наприклад, спробувати звернутись до його healthcheck або основного ендпоінту
+      - name: Check App Health (Example)
+        run: |
+          # Перевіряємо, чи відповідає сервіс 'app' на порту 5000
+          # Команда curl --fail поверне ненульовий код виходу, якщо HTTP статус не 2xx
+          curl --fail http://localhost:5000/status || exit 1
+          # Додайте інші перевірки, якщо потрібно
+
+      # Важливо: Зупинити та видалити всі ресурси (контейнери, мережі, томи)
+      # 'if: always()' гарантує виконання цього кроку, навіть якщо попередні впали,
+      # щоб очистити середовище runner'a.
+      - name: Stop and clean up services
+        if: always()
+        run: docker-compose down -v --remove-orphans
+
+  # --- Етап розгортання видалено ---
+  # deploy:
+  #   ... (код видалено, оскільки немає сервера для розгортання) ...
