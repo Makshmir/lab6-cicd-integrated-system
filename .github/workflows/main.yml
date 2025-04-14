@@ -80,12 +80,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Build Docker image for App (if needed by compose image: tag)
+      - name: Build Docker image for App (if needed by compose image^ tag)
         # Якщо ваш docker compose.yml використовує `build: .` для сервісу 'app',
         # цей крок може бути не потрібним, оскільки `docker compose up` зробить збірку.
         # Якщо він використовує `image: some-name:tag`, вам потрібно зібрати його тут:
         # run: docker build -t some-name:tag .
-        run: echo "Assuming docker compose.yml uses 'build: .' or image is pre-built/pulled."
+        run: echo "Assuming docker compose.yml uses 'build':'' .' or image is pre-built/pulled."
 
       # --- Зміни тут ---
       - name: Start services with Docker Compose
