@@ -1,19 +1,14 @@
 global:
-  scrape_interval: 15s # Інтервал збору метрик
+  scrape_interval: 15s
 
 scrape_configs:
-  - job_name: 'prometheus' # Моніторинг самого Prometheus
+  - job_name: 'prometheus' 
     static_configs:
       - targets: ['localhost:9090']
 
-  - job_name: 'integrated_app' # Моніторинг вашого ПЗ
-    # Припускаємо, що ваш додаток віддає метрики на /metrics
-    metrics_path: /metrics # Змініть, якщо шлях інший
-    static_configs:
-      # Використовуємо ім'я сервісу з docker-compose
-      - targets: ['app:5000']
+  - job_name: 'integrated_app'
 
-  # Додайте сюди конфігурацію для моніторингу az_simulator, якщо він експортує метрики
-  # - job_name: 'az_simulator'
-  #   static_configs:
-  #     - targets: ['az_simulator:8080'] # Приклад порту
+    metrics_path: /metrics 
+    static_configs:
+
+      - targets: ['app:5000']
