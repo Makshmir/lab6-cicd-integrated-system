@@ -1,5 +1,2 @@
 Flask>=2.0
-# Додайте інші залежності, наприклад:
-# requests
-# prometheus-flask-exporter # Якщо використовуєте метрики
-pytest # Для тестування
+pytest 
