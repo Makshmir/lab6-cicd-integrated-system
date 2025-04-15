@@ -6,9 +6,7 @@ services:
     ports:
       - "5000:5000"
     networks:
-      app_network: # <-- Явно вказуємо мережу тут
-        # Можна не вказувати IP для app, він отримає динамічно
-        # з підмережі, визначеної нижче
+      app_network: 
     environment:
       - HW_SIMULATOR_ADDRESS=http://az_simulator:8080
     depends_on:
@@ -17,9 +15,7 @@ services:
     logging:
       driver: "gelf"
       options:
-        # --- ЗМІНИ ТУТ: Використовуємо статичну IP Logstash ---
-        gelf-address: "udp://172.28.1.1:12201" # <-- ВКАЖІТЬ СТАТИЧНУ IP
-        # --- Кінець змін ---
+        gelf-address: "udp://172.28.1.1:12201" 
         tag: "integrated_app"
 
   az_simulator:
@@ -28,9 +24,7 @@ services:
     command: sh -c "echo 'Simulating HW...' && sleep infinity"
     restart: unless-stopped
     networks:
-      app_network: # <-- Явно вказуємо мережу
-        # IP для симулятора (опціонально)
-        # ipv4_address: 172.28.1.2
+      app_network: 
 
   prometheus:
     image: prom/prometheus:v2.37.0
@@ -43,9 +37,9 @@ services:
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
-      # ... решта command ...
+
     networks:
-      app_network: # <-- Явно вказуємо мережу
+      app_network: 
 
   grafana:
     image: grafana/grafana:8.5.2
@@ -60,7 +54,7 @@ services:
     depends_on:
       - prometheus
     networks:
-      app_network: # <-- Явно вказуємо мережу
+      app_network:
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:7.17.5
@@ -68,7 +62,7 @@ services:
     restart: unless-stopped
     environment:
       - discovery.type=single-node
-      # ... решта environment ...
+
     ulimits:
       memlock:
         soft: -1
@@ -78,7 +72,7 @@ services:
     ports:
       - "9200:9200"
     networks:
-      app_network: # <-- Явно вказуємо мережу
+      app_network:
 
   logstash:
     image: docker.elastic.co/logstash/logstash:7.17.5
@@ -91,11 +85,11 @@ services:
       - "12201:12201/udp"
     depends_on:
       - elasticsearch
-    # --- ЗМІНИ ТУТ: Призначаємо статичну IP для Logstash ---
+
     networks:
       app_network:
-        ipv4_address: 172.28.1.1 # <-- СТАТИЧНА IP ДЛЯ LOGSTASH
-    # --- Кінець змін ---
+        ipv4_address: 172.28.1.1 
+
 
   kibana:
     image: docker.elastic.co/kibana/kibana:7.17.5
@@ -108,18 +102,16 @@ services:
     depends_on:
       - elasticsearch
     networks:
-      app_network: # <-- Явно вказуємо мережу
+      app_network:
 
-# --- ЗМІНИ ТУТ: Конфігуруємо мережу з IPAM ---
 networks:
   app_network:
     driver: bridge
     ipam:
       driver: default
       config:
-        - subnet: 172.28.0.0/16 # Визначаємо підмережу для нашої мережі
+        - subnet: 172.28.0.0/16 
           gateway: 172.28.0.1
-# --- Кінець змін ---
 
 volumes:
   prometheus_data:
